@@ -137,9 +137,10 @@ class ArxivRetriever(BaseRetriever):
             search = arxiv.Search(id_list=batch_ids)
             try:
                 batch = list(client.results(search))
-            except Exception as exc:
+            except (arxiv.HTTPError, arxiv.UnexpectedEmptyPageError) as exc:
+                batch_label = f"{batch_ids[0]} to {batch_ids[-1]}" if batch_ids else f"index {i}"
                 logger.warning(
-                    f"Failed to fetch arXiv metadata batch starting at index {i}: {exc}"
+                    f"Failed to fetch arXiv metadata batch [{batch_label}]: {exc}"
                 )
                 bar.update(len(batch_ids))
                 continue
