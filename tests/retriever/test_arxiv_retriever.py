@@ -63,6 +63,61 @@ def test_arxiv_retriever(config, mock_feedparser, monkeypatch):
     assert set(p.title for p in papers) == set(e.title for e in new_entries)
 
 
+def test_arxiv_retriever_skips_failed_metadata_batch(config, monkeypatch):
+    monkeypatch.setattr("zotero_arxiv_daily.retriever.base.sleep", lambda _: None)
+
+    paper_ids = [f"2508.{i:05d}" for i in range(21)]
+    mock_feed = feedparser.FeedParserDict(
+        feed=feedparser.FeedParserDict(title="Arxiv feed"),
+        entries=[
+            feedparser.FeedParserDict(
+                id=f"oai:arXiv.org:{paper_id}",
+                title=f"Paper {paper_id}",
+                arxiv_announce_type="new",
+            )
+            for paper_id in paper_ids
+        ],
+    )
+    monkeypatch.setattr(arxiv_retriever.feedparser, "parse", lambda _: mock_feed)
+
+    fake_results = [
+        SimpleNamespace(
+            title=f"Paper {paper_id}",
+            authors=[SimpleNamespace(name="Test Author")],
+            summary="Test abstract",
+            pdf_url=f"https://arxiv.org/pdf/{paper_id}",
+            entry_id=f"https://arxiv.org/abs/{paper_id}",
+            source_url=lambda paper_id=paper_id: f"https://arxiv.org/e-print/{paper_id}",
+        )
+        for paper_id in paper_ids[:20]
+    ]
+
+    class FlakyClient:
+        def __init__(self, **kw):
+            self.calls = 0
+
+        def results(self, search):
+            self.calls += 1
+            if self.calls == 2:
+                raise arxiv_retriever.arxiv.HTTPError(
+                    "https://export.arxiv.org/api/query", 0, 503
+                )
+            return iter(fake_results)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(arxiv_retriever, "logger", SimpleNamespace(warning=warnings.append))
+    monkeypatch.setattr(arxiv_retriever.arxiv, "Client", FlakyClient)
+    monkeypatch.setattr(arxiv_retriever, "extract_text_from_html", lambda paper: None)
+    monkeypatch.setattr(arxiv_retriever, "extract_text_from_pdf", lambda paper: None)
+    monkeypatch.setattr(arxiv_retriever, "extract_text_from_tar", lambda paper: None)
+
+    retriever = ArxivRetriever(config)
+    papers = retriever.retrieve_papers()
+
+    assert len(papers) == 20
+    assert any("Failed to fetch arXiv metadata batch" in warning for warning in warnings)
+
+
 def test_run_with_hard_timeout_returns_value():
     result = _run_with_hard_timeout(
         _sleep_and_return, ("done", 0.01), timeout=1, operation="test op", paper_title="paper"
