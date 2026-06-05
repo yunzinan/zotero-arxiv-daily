@@ -133,8 +133,16 @@ class ArxivRetriever(BaseRetriever):
         # Get full information of each paper from arxiv api
         bar = tqdm(total=len(all_paper_ids))
         for i in range(0, len(all_paper_ids), 20):
-            search = arxiv.Search(id_list=all_paper_ids[i:i + 20])
-            batch = list(client.results(search))
+            batch_ids = all_paper_ids[i:i + 20]
+            search = arxiv.Search(id_list=batch_ids)
+            try:
+                batch = list(client.results(search))
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to fetch arXiv metadata batch starting at index {i}: {exc}"
+                )
+                bar.update(len(batch_ids))
+                continue
             bar.update(len(batch))
             raw_papers.extend(batch)
         bar.close()
