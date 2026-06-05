@@ -4,6 +4,8 @@ import time
 from types import SimpleNamespace
 
 import feedparser
+import pytest
+import requests
 
 from zotero_arxiv_daily.retriever.arxiv_retriever import ArxivRetriever, _run_with_hard_timeout
 import zotero_arxiv_daily.retriever.arxiv_retriever as arxiv_retriever
@@ -63,7 +65,16 @@ def test_arxiv_retriever(config, mock_feedparser, monkeypatch):
     assert set(p.title for p in papers) == set(e.title for e in new_entries)
 
 
-def test_arxiv_retriever_skips_failed_metadata_batch(config, monkeypatch):
+@pytest.mark.parametrize(
+    "error_factory",
+    [
+        lambda: arxiv_retriever.arxiv.HTTPError(
+            "https://export.arxiv.org/api/query", 0, 503
+        ),
+        lambda: requests.RequestException("temporary network error"),
+    ],
+)
+def test_arxiv_retriever_skips_failed_metadata_batch(config, monkeypatch, error_factory):
     monkeypatch.setattr("zotero_arxiv_daily.retriever.base.sleep", lambda _: None)
 
     paper_ids = [f"2508.{i:05d}" for i in range(21)]
@@ -99,9 +110,7 @@ def test_arxiv_retriever_skips_failed_metadata_batch(config, monkeypatch):
         def results(self, search):
             self.calls += 1
             if self.calls == 2:
-                raise arxiv_retriever.arxiv.HTTPError(
-                    "https://export.arxiv.org/api/query", 0, 503
-                )
+                raise error_factory()
             return iter(fake_results)
 
     warnings: list[str] = []
